@@ -264,6 +264,42 @@ def admin_delete_photo(
     db.commit()
     return {"message": "Photo deleted successfully", "photo_id": photo_id}
 
+# Add this schema helper or import
+class EventUpdate(schemas.BaseModel):
+    title: str | None = None
+    access_code: str | None = None
+
+# Update an existing event title or access code
+@app.patch("/admin/events/{event_id}", status_code=status.HTTP_200_OK)
+def admin_update_event(
+    event_id: int,
+    payload: EventUpdate,
+    db: Session = Depends(get_db),
+    is_admin: bool = Depends(verify_admin_key)
+):
+    event = db.query(models.Event).filter(models.Event.id == event_id).first()
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+
+    if payload.access_code:
+        new_code = payload.access_code.strip().upper()
+        if new_code != event.access_code:
+            existing = db.query(models.Event).filter(models.Event.access_code == new_code).first()
+            if existing:
+                raise HTTPException(status_code=400, detail="Access code is already taken by another event.")
+            event.access_code = new_code
+
+    if payload.title:
+        event.title = payload.title.strip()
+
+    db.commit()
+    db.refresh(event)
+    return {
+        "message": "Event updated successfully",
+        "id": event.id,
+        "title": event.title,
+        "access_code": event.access_code
+    }
 
 # 4. Moderation: Delete an entire event
 @app.delete("/admin/events/{event_id}", status_code=status.HTTP_200_OK)

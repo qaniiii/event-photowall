@@ -28,7 +28,7 @@
 
   <main class="max-w-6xl mx-auto px-4 py-8">
 
-    <!-- Auth Gate Modal / Screen -->
+    <!-- Auth Gate Modal -->
     <div id="authScreen" class="max-w-md mx-auto mt-12 bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl">
       <div class="text-center mb-6">
         <div class="w-12 h-12 bg-indigo-500/10 text-indigo-400 rounded-full flex items-center justify-center mx-auto mb-3 text-xl">
@@ -50,7 +50,7 @@
       </form>
     </div>
 
-    <!-- Admin Dashboard (Hidden Until Authenticated) -->
+    <!-- Admin Dashboard -->
     <div id="dashboardSection" class="hidden space-y-8">
 
       <!-- Action Panel: Create Event -->
@@ -98,6 +98,34 @@
 
   </main>
 
+  <!-- Edit Event Modal -->
+  <div id="editEventModal" class="hidden fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 max-w-sm w-full space-y-4">
+      <h3 class="font-bold text-white text-base">Edit Event Details</h3>
+      <form id="editEventForm" class="space-y-3">
+        <input type="hidden" id="editEventId" />
+        <div>
+          <label class="block text-xs text-slate-400 mb-1">Event Title</label>
+          <input type="text" id="editEventTitle" required
+            class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+        </div>
+        <div>
+          <label class="block text-xs text-slate-400 mb-1">Access Code</label>
+          <input type="text" id="editEventCode" required uppercase
+            class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white uppercase focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+        </div>
+        <div class="flex items-center justify-end gap-2 pt-2">
+          <button type="button" onclick="closeEditModal()" class="text-xs text-slate-400 hover:text-white px-3 py-2">
+            Cancel
+          </button>
+          <button type="submit" class="bg-indigo-600 hover:bg-indigo-500 text-xs font-semibold px-4 py-2 rounded-xl text-white shadow">
+            Save Changes
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <!-- QR Code Modal -->
   <div id="qrModal" class="hidden fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
     <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 max-w-sm w-full text-center space-y-4">
@@ -121,8 +149,9 @@
     const adminKeyInput = document.getElementById("adminKeyInput");
     const eventsContainer = document.getElementById("eventsContainer");
     const createEventForm = document.getElementById("createEventForm");
+    const editEventModal = document.getElementById("editEventModal");
+    const editEventForm = document.getElementById("editEventForm");
 
-    // Check if key is already stored in session
     if (adminKey) {
       showDashboard();
     }
@@ -147,7 +176,6 @@
       loadEvents();
     }
 
-    // Fetch and render events
     async function loadEvents() {
       eventsContainer.innerHTML = `<div class="p-8 text-center text-xs text-slate-500">Loading events...</div>`;
       try {
@@ -177,11 +205,14 @@
                 <span class="text-base font-bold text-white">${ev.title}</span>
               </div>
               <div class="flex items-center gap-2">
-                <button onclick="showQrCode('${ev.access_code}', '${ev.title}')" class="text-xs bg-slate-800 hover:bg-slate-700 px-3 py-1.5 rounded-lg text-slate-300">
+                <button onclick="openEditModal(${ev.id}, '${ev.title.replace(/'/g, "\\'")}', '${ev.access_code}')" class="text-xs bg-slate-800 hover:bg-slate-700 px-3 py-1.5 rounded-lg text-slate-300">
+                  ✏️ Edit
+                </button>
+                <button onclick="showQrCode('${ev.access_code}', '${ev.title.replace(/'/g, "\\'")}')" class="text-xs bg-slate-800 hover:bg-slate-700 px-3 py-1.5 rounded-lg text-slate-300">
                   📱 QR Code
                 </button>
-                <button onclick="deleteEvent(${ev.id}, '${ev.title}')" class="text-xs bg-red-950/40 hover:bg-red-900/50 text-red-400 border border-red-900/40 px-3 py-1.5 rounded-lg transition">
-                  🗑️ Delete Event
+                <button onclick="deleteEvent(${ev.id}, '${ev.title.replace(/'/g, "\\'")}')" class="text-xs bg-red-950/40 hover:bg-red-900/50 text-red-400 border border-red-900/40 px-3 py-1.5 rounded-lg transition">
+                  🗑️ Delete
                 </button>
               </div>
             </div>
@@ -215,6 +246,47 @@
         eventsContainer.innerHTML = `<div class="p-4 text-xs text-red-400">Failed to load events: ${err.message}</div>`;
       }
     }
+
+    // Edit Modal Operations
+    function openEditModal(id, title, code) {
+      document.getElementById("editEventId").value = id;
+      document.getElementById("editEventTitle").value = title;
+      document.getElementById("editEventCode").value = code;
+      editEventModal.classList.remove("hidden");
+    }
+
+    function closeEditModal() {
+      editEventModal.classList.add("hidden");
+    }
+
+    editEventForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const eventId = document.getElementById("editEventId").value;
+      const title = document.getElementById("editEventTitle").value.trim();
+      const access_code = document.getElementById("editEventCode").value.trim().toUpperCase();
+
+      try {
+        const res = await fetch(`/admin/events/${eventId}`, {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+            "x-admin-key": adminKey
+          },
+          body: JSON.stringify({ title, access_code })
+        });
+
+        if (!res.ok) {
+          const err = await res.json();
+          alert(`Error: ${err.detail || 'Could not update event'}`);
+          return;
+        }
+
+        closeEditModal();
+        loadEvents();
+      } catch (err) {
+        alert("Update failed: " + err.message);
+      }
+    });
 
     // Create Event Form Handler
     createEventForm.addEventListener("submit", async (e) => {
@@ -283,12 +355,11 @@
       }
     }
 
-    // QR Code Modal Logic
+    // QR Code Modal
     let qrInstance = null;
     function showQrCode(accessCode, title) {
       document.getElementById("qrModalTitle").textContent = title;
       const origin = window.location.origin;
-      // Pre-fill query or link to the guest join
       const joinUrl = `${origin}/?code=${accessCode}`;
       document.getElementById("qrUrlText").textContent = joinUrl;
 

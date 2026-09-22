@@ -5,8 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Event Photo Wall</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <!-- JSZip & FileSaver CDN -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/FileSaver.js/2.0.5/FileSaver.min.js"></script>
 </head>
-<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col">
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col pb-24">
 
   <!-- Header -->
   <header class="border-b border-slate-800 bg-slate-900/60 backdrop-blur sticky top-0 z-30">
@@ -46,7 +49,7 @@
       </form>
     </section>
 
-    <!-- 2. Event Gallery View (Hidden by default) -->
+    <!-- 2. Event Gallery View -->
     <div id="eventSection" class="hidden space-y-8">
       
       <!-- Event Header Banner -->
@@ -56,10 +59,16 @@
           <h2 id="eventTitleDisplay" class="text-2xl font-extrabold text-white mt-2"></h2>
           <p id="eventMetaDisplay" class="text-xs text-slate-400 mt-0.5"></p>
         </div>
-        <button onclick="document.getElementById('uploadDrawer').scrollIntoView({behavior: 'smooth'})"
-          class="bg-indigo-600 hover:bg-indigo-500 text-sm font-semibold px-4 py-2.5 rounded-xl shadow-lg transition">
-          + Share Photos
-        </button>
+        <div class="flex flex-wrap items-center gap-2">
+          <button onclick="downloadAllZip()" id="zipAllBtn"
+            class="bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-semibold px-3 py-2.5 rounded-xl transition">
+            📦 Download All (.zip)
+          </button>
+          <button onclick="document.getElementById('uploadDrawer').scrollIntoView({behavior: 'smooth'})"
+            class="bg-indigo-600 hover:bg-indigo-500 text-xs font-semibold px-4 py-2.5 rounded-xl shadow-lg transition">
+            + Share Photos
+          </button>
+        </div>
       </div>
 
       <!-- Upload Form Drawer -->
@@ -92,10 +101,16 @@
         </form>
       </section>
 
-      <!-- Photos Masonry Grid -->
+      <!-- Photos Masonry Grid & Controls -->
       <section>
         <div class="flex items-center justify-between mb-4">
-          <h3 class="text-sm font-semibold text-slate-300">Live Gallery (<span id="photoCountDisplay">0</span>)</h3>
+          <div class="flex items-center gap-3">
+            <h3 class="text-sm font-semibold text-slate-300">Live Gallery (<span id="photoCountDisplay">0</span>)</h3>
+            <button id="toggleSelectModeBtn" onclick="toggleSelectMode()"
+              class="text-xs bg-slate-800 hover:bg-slate-700 border border-slate-700 px-2.5 py-1 rounded-lg text-slate-300">
+              ☑️ Select
+            </button>
+          </div>
           <button onclick="refreshCurrentEvent()" class="text-xs text-slate-400 hover:text-white transition">
             🔄 Refresh
           </button>
@@ -109,8 +124,24 @@
 
   </main>
 
+  <!-- Sticky Bottom Floating Action Bar for Selected Photos -->
+  <div id="selectionBar" class="hidden fixed bottom-4 inset-x-0 max-w-md mx-auto z-40 px-4">
+    <div class="bg-indigo-900/90 border border-indigo-700/80 backdrop-blur-md rounded-2xl p-3 shadow-2xl flex items-center justify-between">
+      <span class="text-xs text-indigo-200 font-medium pl-2"><span id="selectedCountText">0</span> photos selected</span>
+      <div class="flex items-center gap-2">
+        <button onclick="cancelSelection()" class="text-xs text-slate-300 hover:text-white px-2 py-1">Cancel</button>
+        <button onclick="downloadSelectedZip()" id="downloadSelectedBtn" class="bg-emerald-600 hover:bg-emerald-500 text-xs font-semibold px-3 py-1.5 rounded-xl text-white shadow">
+          Download ZIP
+        </button>
+      </div>
+    </div>
+  </div>
+
   <script>
     let currentCode = "";
+    let currentPhotos = [];
+    let isSelectMode = false;
+    let selectedPhotoIds = new Set();
 
     const joinSection = document.getElementById("joinSection");
     const eventSection = document.getElementById("eventSection");
@@ -120,8 +151,8 @@
     const projectorBtn = document.getElementById("projectorBtn");
     const uploadForm = document.getElementById("uploadForm");
     const submitUploadBtn = document.getElementById("submitUploadBtn");
+    const selectionBar = document.getElementById("selectionBar");
 
-    // Auto-Join: Check URL parameter ?code=...
     window.addEventListener("DOMContentLoaded", () => {
       const params = new URLSearchParams(window.location.search);
       const codeFromUrl = params.get("code");
@@ -147,6 +178,8 @@
 
     function resetToJoin() {
       currentCode = "";
+      currentPhotos = [];
+      cancelSelection();
       window.history.replaceState({}, document.title, window.location.pathname);
       eventSection.classList.add("hidden");
       leaveBtn.classList.add("hidden");
@@ -164,12 +197,13 @@
         }
         const data = await res.json();
         currentCode = data.access_code;
+        currentPhotos = data.photos || [];
 
         document.getElementById("eventBadgeCode").textContent = data.access_code;
         document.getElementById("eventTitleDisplay").textContent = data.title;
         document.getElementById("eventMetaDisplay").textContent = `Created ${new Date(data.created_at).toLocaleDateString()}`;
 
-        renderPhotos(data.photos);
+        renderPhotos(currentPhotos);
 
         joinSection.classList.add("hidden");
         eventSection.classList.remove("hidden");
@@ -186,10 +220,47 @@
         const res = await fetch(`/events/${currentCode}`);
         if (res.ok) {
           const data = await res.json();
-          renderPhotos(data.photos);
+          currentPhotos = data.photos || [];
+          renderPhotos(currentPhotos);
         }
       } catch (err) {
         console.error(err);
+      }
+    }
+
+    function toggleSelectMode() {
+      isSelectMode = !isSelectMode;
+      selectedPhotoIds.clear();
+      updateSelectionUI();
+      renderPhotos(currentPhotos);
+      document.getElementById("toggleSelectModeBtn").textContent = isSelectMode ? "Done" : "☑️ Select";
+    }
+
+    function cancelSelection() {
+      isSelectMode = false;
+      selectedPhotoIds.clear();
+      updateSelectionUI();
+      renderPhotos(currentPhotos);
+      document.getElementById("toggleSelectModeBtn").textContent = "☑️ Select";
+    }
+
+    function togglePhotoSelect(id) {
+      if (selectedPhotoIds.has(id)) {
+        selectedPhotoIds.delete(id);
+      } else {
+        selectedPhotoIds.add(id);
+      }
+      updateSelectionUI();
+      renderPhotos(currentPhotos);
+    }
+
+    function updateSelectionUI() {
+      const count = selectedPhotoIds.size;
+      document.getElementById("selectedCountText").textContent = count;
+      if (isSelectMode && count > 0) {
+        selectionBar.classList.remove("hidden");
+      } else {
+        selectionBar.classList.add("hidden");
       }
     }
 
@@ -202,22 +273,99 @@
         return;
       }
 
-      // Show newest first
       const sorted = [...photos].reverse();
-      grid.innerHTML = sorted.map(p => `
-        <div class="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-lg flex flex-col transition hover:border-slate-700">
-          <div class="aspect-square bg-slate-950 overflow-hidden">
-            <img src="${p.image_url}" class="w-full h-full object-cover transition duration-300 hover:scale-105" loading="lazy" />
-          </div>
-          <div class="p-4 flex-1 flex flex-col justify-between">
-            <p class="text-sm text-slate-200">${p.caption || '<span class="italic text-slate-500">No caption</span>'}</p>
-            <div class="mt-3 flex items-center justify-between text-[11px] text-slate-400 border-t border-slate-800/80 pt-2">
-              <span class="font-medium text-indigo-400">By ${p.uploader_name}</span>
-              <span>${p.uploaded_at ? new Date(p.uploaded_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : ''}</span>
+      grid.innerHTML = sorted.map(p => {
+        const isSelected = selectedPhotoIds.has(p.id);
+        return `
+          <div class="relative bg-slate-900 border ${isSelected ? 'border-indigo-500 ring-2 ring-indigo-500/50' : 'border-slate-800'} rounded-2xl overflow-hidden shadow-lg flex flex-col transition hover:border-slate-700 cursor-pointer"
+               onclick="${isSelectMode ? `togglePhotoSelect(${p.id})` : ''}">
+            
+            ${isSelectMode ? `
+              <div class="absolute top-2 left-2 z-10">
+                <input type="checkbox" ${isSelected ? 'checked' : ''} class="w-5 h-5 rounded text-indigo-600 focus:ring-0 pointer-events-none" />
+              </div>
+            ` : ''}
+
+            <div class="aspect-square bg-slate-950 overflow-hidden relative">
+              <img src="${p.image_url}" class="w-full h-full object-cover transition duration-300 hover:scale-105" loading="lazy" />
+              <!-- Direct individual download icon -->
+              <a href="${p.image_url}" target="_blank" download="photo-${p.id}.jpg" onclick="event.stopPropagation()"
+                class="absolute bottom-2 right-2 bg-slate-900/80 hover:bg-slate-900 text-slate-300 p-2 rounded-xl text-xs backdrop-blur border border-white/10 shadow">
+                ⬇️
+              </a>
+            </div>
+
+            <div class="p-4 flex-1 flex flex-col justify-between">
+              <p class="text-sm text-slate-200">${p.caption || '<span class="italic text-slate-500">No caption</span>'}</p>
+              <div class="mt-3 flex items-center justify-between text-[11px] text-slate-400 border-t border-slate-800/80 pt-2">
+                <span class="font-medium text-indigo-400">By ${p.uploader_name}</span>
+                <span>${p.uploaded_at ? new Date(p.uploaded_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : ''}</span>
+              </div>
             </div>
           </div>
-        </div>
-      `).join('');
+        `;
+      }).join('');
+    }
+
+    // Helper: Download a list of photos into a ZIP
+    async function packageAndSaveZip(targetPhotos, filename) {
+      if (!targetPhotos || targetPhotos.length === 0) {
+        alert("No photos to download!");
+        return;
+      }
+
+      const zip = new JSZip();
+      const folder = zip.folder(currentCode || "photos");
+
+      for (let i = 0; i < targetPhotos.length; i++) {
+        const photo = targetPhotos[i];
+        try {
+          const resp = await fetch(photo.image_url);
+          const blob = await resp.blob();
+          const cleanName = (photo.uploader_name || "photo").replace(/[^a-zA-Z0-9]/g, "_");
+          folder.file(`${i + 1}_${cleanName}_${photo.id}.jpg`, blob);
+        } catch (e) {
+          console.error("Failed to bundle image:", photo.image_url, e);
+        }
+      }
+
+      const content = await zip.generateAsync({ type: "blob" });
+      saveAs(content, filename);
+    }
+
+    // Bulk Download All
+    async function downloadAllZip() {
+      const btn = document.getElementById("zipAllBtn");
+      const originalText = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = "Packing ZIP...";
+
+      try {
+        await packageAndSaveZip(currentPhotos, `${currentCode}_all_photos.zip`);
+      } catch (err) {
+        alert("Download failed: " + err.message);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = originalText;
+      }
+    }
+
+    // Download Selected
+    async function downloadSelectedZip() {
+      const btn = document.getElementById("downloadSelectedBtn");
+      btn.disabled = true;
+      btn.textContent = "Generating...";
+
+      const selected = currentPhotos.filter(p => selectedPhotoIds.has(p.id));
+      try {
+        await packageAndSaveZip(selected, `${currentCode}_selected_photos.zip`);
+        cancelSelection();
+      } catch (err) {
+        alert("Failed to download selected photos: " + err.message);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = "Download ZIP";
+      }
     }
 
     // Batch Upload Handler
