@@ -131,6 +131,61 @@ def upload_photo(
     db.refresh(photo)
     return photo
 
+# Rate-Limited & Validated: Multi-photo Batch Upload (Up to 5 images per request)
+@app.post("/events/{access_code}/photos/batch", response_model=list[schemas.PhotoResponse], status_code=status.HTTP_201_CREATED)
+@limiter.limit("5/minute")
+def upload_photos_batch(
+    request: Request,
+    access_code: str,
+    files: list[UploadFile] = File(...),
+    uploader_name: str = Form("Anonymous"),
+    caption: str = Form(""),
+    db: Session = Depends(get_db)
+):
+    event = db.query(models.Event).filter(models.Event.access_code == access_code.upper()).first()
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+
+    if len(files) > 5:
+        raise HTTPException(status_code=400, detail="Maximum 5 photos can be uploaded simultaneously.")
+
+    created_photos = []
+    clean_name = uploader_name.strip() or "Anonymous"
+    clean_caption = caption.strip()
+
+    for file in files:
+        if file.content_type not in ALLOWED_IMAGE_TYPES:
+            continue  # Skip unallowed types gracefully in batch
+
+        contents = file.file.read()
+        if len(contents) > MAX_FILE_SIZE:
+            continue  # Skip files exceeding 10MB
+        file.file.seek(0)
+
+        try:
+            upload_result = cloudinary.uploader.upload(
+                file.file,
+                folder=f"photowall/{access_code.upper()}"
+            )
+            image_url = upload_result.get("secure_url")
+
+            photo = models.Photo(
+                event_id=event.id,
+                image_url=image_url,
+                uploader_name=clean_name,
+                caption=clean_caption
+            )
+            db.add(photo)
+            db.commit()
+            db.refresh(photo)
+            created_photos.append(photo)
+        except Exception:
+            continue
+
+    if not created_photos:
+        raise HTTPException(status_code=400, detail="No valid images were successfully uploaded.")
+
+    return created_photos
 
 # ==========================================
 # PROTECTED ADMIN ENDPOINTS

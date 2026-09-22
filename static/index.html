@@ -6,188 +6,258 @@
   <title>Event Photo Wall</title>
   <script src="https://cdn.tailwindcss.com"></script>
 </head>
-<body class="bg-slate-50 text-slate-900 min-h-screen">
+<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col">
 
-  <div class="max-w-4xl mx-auto px-4 py-8">
-    <!-- Header -->
-    <header class="text-center mb-8">
-      <h1 class="text-3xl font-extrabold tracking-tight text-slate-800" id="eventTitle">Event Photo Wall</h1>
-      <p class="text-slate-500 text-sm mt-1" id="eventSubtitle">Enter an access code to join an album</p>
-    </header>
-
-    <!-- Step 1: Enter Access Code -->
-    <section id="codeSection" class="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 max-w-md mx-auto mb-8">
-      <form id="codeForm" class="flex gap-2">
-        <input 
-          type="text" 
-          id="accessCodeInput" 
-          placeholder="e.g. WED123" 
-          required 
-          class="flex-1 px-4 py-2 border border-slate-300 rounded-lg uppercase tracking-wider focus:outline-none focus:ring-2 focus:ring-indigo-500"
-        />
-        <button 
-          type="submit" 
-          class="bg-indigo-600 hover:bg-indigo-700 text-white font-medium px-5 py-2 rounded-lg transition"
-        >
-          Join
-        </button>
-      </form>
-    </section>
-
-    <!-- Step 2: Upload Area (Hidden until valid event loaded) -->
-    <section id="uploadSection" class="hidden bg-white p-6 rounded-2xl shadow-sm border border-slate-200 mb-8">
-      <h2 class="text-lg font-semibold text-slate-800 mb-4">Share a Photo</h2>
-      <form id="uploadForm" class="space-y-4">
-        <div>
-          <label class="block text-xs font-medium text-slate-600 mb-1">Your Name</label>
-          <input 
-            type="text" 
-            id="uploaderName" 
-            placeholder="Guest" 
-            class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-          />
-        </div>
-        <div>
-          <label class="block text-xs font-medium text-slate-600 mb-1">Caption</label>
-          <input 
-            type="text" 
-            id="caption" 
-            placeholder="Write a message..." 
-            class="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-          />
-        </div>
-        <div>
-          <label class="block text-xs font-medium text-slate-600 mb-1">Select Photo</label>
-          <input 
-            type="file" 
-            id="fileInput" 
-            accept="image/*" 
-            required 
-            class="w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100 cursor-pointer"
-          />
-        </div>
-        <button 
-          type="submit" 
-          id="uploadBtn" 
-          class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2 rounded-lg transition text-sm"
-        >
-          Upload to Gallery
-        </button>
-      </form>
-    </section>
-
-    <!-- Step 3: Photo Gallery Grid -->
-    <section id="gallerySection" class="hidden">
-      <div class="flex items-center justify-between mb-4">
-        <h2 class="text-lg font-semibold text-slate-800">Gallery</h2>
-        <button id="refreshBtn" class="text-xs text-indigo-600 hover:underline">Refresh photos</button>
+  <!-- Header -->
+  <header class="border-b border-slate-800 bg-slate-900/60 backdrop-blur sticky top-0 z-30">
+    <div class="max-w-4xl mx-auto px-4 py-4 flex items-center justify-between">
+      <div class="flex items-center gap-2 cursor-pointer" onclick="resetToJoin()">
+        <span class="text-2xl">📸</span>
+        <h1 class="text-lg font-bold tracking-tight text-white">Event Photo Wall</h1>
       </div>
-      <div id="photosGrid" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4"></div>
+      <div class="flex items-center gap-3">
+        <button id="projectorBtn" class="hidden text-xs bg-indigo-950/60 hover:bg-indigo-900 border border-indigo-800/60 text-indigo-300 px-3 py-1.5 rounded-lg transition">
+          📽️ Projector Mode
+        </button>
+        <button id="leaveBtn" class="hidden text-xs text-slate-400 hover:text-white transition">
+          Exit Room
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-4xl mx-auto px-4 py-8 flex-1 w-full">
+
+    <!-- 1. Join Event Section -->
+    <section id="joinSection" class="max-w-md mx-auto mt-12 bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl text-center space-y-4">
+      <div class="w-12 h-12 bg-indigo-500/10 text-indigo-400 rounded-full flex items-center justify-center mx-auto text-xl">
+        🎉
+      </div>
+      <h2 class="text-xl font-bold">Join an Event</h2>
+      <p class="text-xs text-slate-400">Enter the access code provided by your event organizer</p>
+      
+      <form id="joinForm" class="space-y-3 pt-2">
+        <input type="text" id="accessCodeInput" required placeholder="e.g. WED123" uppercase
+          class="w-full text-center tracking-widest uppercase font-mono font-bold text-lg bg-slate-800 border border-slate-700 rounded-xl px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+        <button type="submit"
+          class="w-full bg-indigo-600 hover:bg-indigo-500 font-semibold text-sm py-3 rounded-xl transition duration-150 shadow-lg">
+          Enter Photo Wall
+        </button>
+      </form>
     </section>
-  </div>
+
+    <!-- 2. Event Gallery View (Hidden by default) -->
+    <div id="eventSection" class="hidden space-y-8">
+      
+      <!-- Event Header Banner -->
+      <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-slate-900/80 border border-slate-800 rounded-2xl p-6 shadow-sm">
+        <div>
+          <span class="text-xs font-mono font-bold bg-indigo-500/20 text-indigo-400 px-2.5 py-1 rounded-md tracking-wider">ROOM CODE: <span id="eventBadgeCode"></span></span>
+          <h2 id="eventTitleDisplay" class="text-2xl font-extrabold text-white mt-2"></h2>
+          <p id="eventMetaDisplay" class="text-xs text-slate-400 mt-0.5"></p>
+        </div>
+        <button onclick="document.getElementById('uploadDrawer').scrollIntoView({behavior: 'smooth'})"
+          class="bg-indigo-600 hover:bg-indigo-500 text-sm font-semibold px-4 py-2.5 rounded-xl shadow-lg transition">
+          + Share Photos
+        </button>
+      </div>
+
+      <!-- Upload Form Drawer -->
+      <section id="uploadDrawer" class="bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-4">
+        <h3 class="text-sm font-semibold text-white flex items-center gap-2">
+          <span>📤</span> Upload Photos (Select up to 5)
+        </h3>
+        <form id="uploadForm" class="space-y-4">
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label class="block text-xs text-slate-400 mb-1">Your Name</label>
+              <input type="text" id="uploaderName" placeholder="Anonymous"
+                class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+            </div>
+            <div>
+              <label class="block text-xs text-slate-400 mb-1">Caption / Message</label>
+              <input type="text" id="captionInput" placeholder="Wishing you the best!"
+                class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+            </div>
+          </div>
+          <div>
+            <label class="block text-xs text-slate-400 mb-1">Select Photo(s)</label>
+            <input type="file" id="fileInput" accept="image/*" multiple required
+              class="w-full text-xs text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-slate-800 file:text-indigo-400 hover:file:bg-slate-700 cursor-pointer" />
+          </div>
+          <button type="submit" id="submitUploadBtn"
+            class="w-full bg-emerald-600 hover:bg-emerald-500 font-semibold text-sm py-2.5 rounded-xl transition duration-150 shadow-lg">
+            Upload to Wall
+          </button>
+        </form>
+      </section>
+
+      <!-- Photos Masonry Grid -->
+      <section>
+        <div class="flex items-center justify-between mb-4">
+          <h3 class="text-sm font-semibold text-slate-300">Live Gallery (<span id="photoCountDisplay">0</span>)</h3>
+          <button onclick="refreshCurrentEvent()" class="text-xs text-slate-400 hover:text-white transition">
+            🔄 Refresh
+          </button>
+        </div>
+        <div id="photosGrid" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+          <!-- Populated by JS -->
+        </div>
+      </section>
+
+    </div>
+
+  </main>
 
   <script>
     let currentCode = "";
 
-    const codeForm = document.getElementById("codeForm");
+    const joinSection = document.getElementById("joinSection");
+    const eventSection = document.getElementById("eventSection");
+    const joinForm = document.getElementById("joinForm");
     const accessCodeInput = document.getElementById("accessCodeInput");
-    const codeSection = document.getElementById("codeSection");
-    const uploadSection = document.getElementById("uploadSection");
-    const gallerySection = document.getElementById("gallerySection");
-    const eventTitle = document.getElementById("eventTitle");
-    const eventSubtitle = document.getElementById("eventSubtitle");
-    const photosGrid = document.getElementById("photosGrid");
+    const leaveBtn = document.getElementById("leaveBtn");
+    const projectorBtn = document.getElementById("projectorBtn");
     const uploadForm = document.getElementById("uploadForm");
-    const uploadBtn = document.getElementById("uploadBtn");
-    const refreshBtn = document.getElementById("refreshBtn");
+    const submitUploadBtn = document.getElementById("submitUploadBtn");
 
-    async function loadEvent(code) {
+    // Auto-Join: Check URL parameter ?code=...
+    window.addEventListener("DOMContentLoaded", () => {
+      const params = new URLSearchParams(window.location.search);
+      const codeFromUrl = params.get("code");
+      if (codeFromUrl) {
+        accessCodeInput.value = codeFromUrl;
+        joinEvent(codeFromUrl);
+      }
+    });
+
+    joinForm.addEventListener("submit", (e) => {
+      e.preventDefault();
+      const code = accessCodeInput.value.trim().toUpperCase();
+      if (code) joinEvent(code);
+    });
+
+    leaveBtn.addEventListener("click", resetToJoin);
+
+    projectorBtn.addEventListener("click", () => {
+      if (currentCode) {
+        window.open(`/slideshow.html?code=${currentCode}`, '_blank');
+      }
+    });
+
+    function resetToJoin() {
+      currentCode = "";
+      window.history.replaceState({}, document.title, window.location.pathname);
+      eventSection.classList.add("hidden");
+      leaveBtn.classList.add("hidden");
+      projectorBtn.classList.add("hidden");
+      joinSection.classList.remove("hidden");
+      accessCodeInput.value = "";
+    }
+
+    async function joinEvent(code) {
       try {
-        const res = await fetch(`/events/${code.trim().toUpperCase()}`);
+        const res = await fetch(`/events/${code}`);
         if (!res.ok) {
-          alert("Event not found. Make sure the code exists!");
+          alert("Event not found. Please check your access code.");
           return;
         }
         const data = await res.json();
         currentCode = data.access_code;
 
-        eventTitle.textContent = data.title;
-        eventSubtitle.textContent = `Event Code: ${data.access_code}`;
-        uploadSection.classList.remove("hidden");
-        gallerySection.classList.remove("hidden");
-        codeSection.classList.add("hidden");
+        document.getElementById("eventBadgeCode").textContent = data.access_code;
+        document.getElementById("eventTitleDisplay").textContent = data.title;
+        document.getElementById("eventMetaDisplay").textContent = `Created ${new Date(data.created_at).toLocaleDateString()}`;
 
         renderPhotos(data.photos);
+
+        joinSection.classList.add("hidden");
+        eventSection.classList.remove("hidden");
+        leaveBtn.classList.remove("hidden");
+        projectorBtn.classList.remove("hidden");
+      } catch (err) {
+        alert("Error connecting to event: " + err.message);
+      }
+    }
+
+    async function refreshCurrentEvent() {
+      if (!currentCode) return;
+      try {
+        const res = await fetch(`/events/${currentCode}`);
+        if (res.ok) {
+          const data = await res.json();
+          renderPhotos(data.photos);
+        }
       } catch (err) {
         console.error(err);
-        alert("Failed to load event.");
       }
     }
 
     function renderPhotos(photos) {
-      photosGrid.innerHTML = "";
-      if (photos.length === 0) {
-        photosGrid.innerHTML = `<p class="text-slate-400 text-sm col-span-full text-center py-8">No photos uploaded yet. Be the first!</p>`;
+      const grid = document.getElementById("photosGrid");
+      document.getElementById("photoCountDisplay").textContent = photos.length;
+
+      if (!photos || photos.length === 0) {
+        grid.innerHTML = `<div class="col-span-full py-16 text-center text-sm text-slate-500 border border-dashed border-slate-800 rounded-2xl">No photos yet! Be the first to add one above.</div>`;
         return;
       }
-      photos.slice().reverse().forEach(photo => {
-        const card = document.createElement("div");
-        card.className = "bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col";
-        card.innerHTML = `
-          <a href="${photo.image_url}" target="_blank" rel="noopener noreferrer">
-            <img src="${photo.image_url}" alt="${photo.caption || 'Photo'}" class="w-full h-48 object-cover hover:opacity-95 transition" loading="lazy" />
-          </a>
-          <div class="p-3 text-xs flex flex-col justify-between flex-1">
-            <p class="text-slate-800 font-medium mb-1">${photo.caption || ""}</p>
-            <div class="flex justify-between items-center text-slate-400 pt-2 border-t border-slate-100">
-              <span>By ${photo.uploader_name || "Guest"}</span>
-              <span>${new Date(photo.uploaded_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+
+      // Show newest first
+      const sorted = [...photos].reverse();
+      grid.innerHTML = sorted.map(p => `
+        <div class="bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-lg flex flex-col transition hover:border-slate-700">
+          <div class="aspect-square bg-slate-950 overflow-hidden">
+            <img src="${p.image_url}" class="w-full h-full object-cover transition duration-300 hover:scale-105" loading="lazy" />
+          </div>
+          <div class="p-4 flex-1 flex flex-col justify-between">
+            <p class="text-sm text-slate-200">${p.caption || '<span class="italic text-slate-500">No caption</span>'}</p>
+            <div class="mt-3 flex items-center justify-between text-[11px] text-slate-400 border-t border-slate-800/80 pt-2">
+              <span class="font-medium text-indigo-400">By ${p.uploader_name}</span>
+              <span>${p.uploaded_at ? new Date(p.uploaded_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) : ''}</span>
             </div>
           </div>
-        `;
-        photosGrid.appendChild(card);
-      });
+        </div>
+      `).join('');
     }
 
-    codeForm.addEventListener("submit", (e) => {
-      e.preventDefault();
-      loadEvent(accessCodeInput.value);
-    });
-
+    // Batch Upload Handler
     uploadForm.addEventListener("submit", async (e) => {
       e.preventDefault();
-      const file = document.getElementById("fileInput").files[0];
-      const uploaderName = document.getElementById("uploaderName").value || "Guest";
-      const caption = document.getElementById("caption").value || "";
+      const fileInput = document.getElementById("fileInput");
+      const files = fileInput.files;
 
-      if (!file) return;
+      if (!files || files.length === 0) return;
 
       const formData = new FormData();
-      formData.append("file", file);
-      formData.append("uploader_name", uploaderName);
-      formData.append("caption", caption);
+      for (let i = 0; i < files.length; i++) {
+        formData.append("files", files[i]);
+      }
+      formData.append("uploader_name", document.getElementById("uploaderName").value);
+      formData.append("caption", document.getElementById("captionInput").value);
 
-      uploadBtn.disabled = true;
-      uploadBtn.textContent = "Uploading...";
+      submitUploadBtn.disabled = true;
+      submitUploadBtn.textContent = `Uploading ${files.length} photo(s)...`;
 
       try {
-        const res = await fetch(`/events/${currentCode}/photos/`, {
+        const res = await fetch(`/events/${currentCode}/photos/batch`, {
           method: "POST",
-          body: formData,
+          body: formData
         });
-        if (!res.ok) throw new Error("Upload failed");
-        
-        uploadForm.reset();
-        await loadEvent(currentCode);
+
+        if (!res.ok) {
+          const err = await res.json();
+          alert(`Upload failed: ${err.detail || 'Error uploading'}`);
+        } else {
+          uploadForm.reset();
+          await refreshCurrentEvent();
+        }
       } catch (err) {
         alert("Upload error: " + err.message);
       } finally {
-        uploadBtn.disabled = false;
-        uploadBtn.textContent = "Upload to Gallery";
+        submitUploadBtn.disabled = false;
+        submitUploadBtn.textContent = "Upload to Wall";
       }
     });
-
-    refreshBtn.addEventListener("click", () => loadEvent(currentCode));
   </script>
 </body>
 </html>

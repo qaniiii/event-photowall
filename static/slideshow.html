@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Live Slideshow | Event Photo Wall</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    .fade-transition {
+      transition: opacity 1s ease-in-out;
+    }
+  </style>
+</head>
+<body class="bg-black text-white h-screen w-screen overflow-hidden flex flex-col justify-between select-none">
+
+  <!-- Floating Minimal Header -->
+  <header class="p-6 flex items-center justify-between z-20 bg-gradient-to-b from-black/80 to-transparent">
+    <div>
+      <span class="text-xs uppercase tracking-widest font-mono text-indigo-400" id="roomCodeDisplay">ROOM CODE</span>
+      <h1 class="text-2xl font-bold tracking-tight text-white drop-shadow" id="eventTitle">Event Photo Wall</h1>
+    </div>
+    <div class="flex items-center gap-3">
+      <span class="text-xs bg-white/10 backdrop-blur px-3 py-1 rounded-full text-slate-300 font-mono" id="photoCount">0 photos</span>
+      <button onclick="toggleFullScreen()" class="text-xs bg-white/10 hover:bg-white/20 backdrop-blur px-3 py-1.5 rounded-lg border border-white/10 text-white transition">
+        ⛶ Fullscreen
+      </button>
+    </div>
+  </header>
+
+  <!-- Central Stage -->
+  <main class="relative flex-1 flex items-center justify-center p-4">
+    <!-- Active Slide -->
+    <div id="slideContainer" class="relative max-w-5xl max-h-[75vh] w-full h-full flex items-center justify-center">
+      <img id="currentImage" src="" class="max-w-full max-h-full object-contain rounded-2xl shadow-2xl fade-transition opacity-0" />
+    </div>
+
+    <!-- Empty State -->
+    <div id="emptyMessage" class="hidden text-center text-slate-500">
+      <div class="text-4xl mb-2">📸</div>
+      <p class="text-lg">Waiting for the first photo...</p>
+      <p class="text-xs text-slate-600 mt-1">Scan QR code or join the room to upload!</p>
+    </div>
+  </main>
+
+  <!-- Floating Footer with Caption & Uploader -->
+  <footer class="p-6 bg-gradient-to-t from-black/80 to-transparent z-20 min-h-[90px] flex items-end">
+    <div id="captionCard" class="bg-slate-900/80 backdrop-blur border border-white/10 rounded-xl px-5 py-3 max-w-xl mx-auto shadow-2xl text-center hidden">
+      <p id="captionText" class="text-base text-slate-100 font-medium"></p>
+      <p id="uploaderText" class="text-xs text-indigo-400 mt-0.5 font-semibold"></p>
+    </div>
+  </footer>
+
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get("code");
+
+    if (!code) {
+      alert("No event code specified. Redirecting to home.");
+      window.location.href = "/";
+    }
+
+    document.getElementById("roomCodeDisplay").textContent = `ROOM: ${code.toUpperCase()}`;
+
+    let photos = [];
+    let currentIndex = 0;
+    const currentImage = document.getElementById("currentImage");
+    const captionCard = document.getElementById("captionCard");
+    const captionText = document.getElementById("captionText");
+    const uploaderText = document.getElementById("uploaderText");
+    const emptyMessage = document.getElementById("emptyMessage");
+    const photoCount = document.getElementById("photoCount");
+
+    // Fetch and sync data
+    async function fetchEventData() {
+      try {
+        const res = await fetch(`/events/${code}`);
+        if (!res.ok) return;
+        const data = await res.json();
+
+        document.getElementById("eventTitle").textContent = data.title;
+        photos = data.photos || [];
+        photoCount.textContent = `${photos.length} photos`;
+
+        if (photos.length === 0) {
+          emptyMessage.classList.remove("hidden");
+          currentImage.classList.add("opacity-0");
+          captionCard.classList.add("hidden");
+        } else {
+          emptyMessage.classList.add("hidden");
+          if (!currentImage.src || currentImage.classList.contains("opacity-0")) {
+            displayPhoto(currentIndex);
+          }
+        }
+      } catch (err) {
+        console.error("Polling error:", err);
+      }
+    }
+
+    function displayPhoto(index) {
+      if (!photos || photos.length === 0) return;
+      const photo = photos[index];
+
+      // Fade out
+      currentImage.classList.remove("opacity-100");
+      currentImage.classList.add("opacity-0");
+
+      setTimeout(() => {
+        currentImage.src = photo.image_url;
+
+        // Update caption
+        if (photo.caption || photo.uploader_name) {
+          captionText.textContent = photo.caption || "";
+          uploaderText.textContent = photo.uploader_name ? `Uploaded by ${photo.uploader_name}` : "";
+          captionCard.classList.remove("hidden");
+        } else {
+          captionCard.classList.add("hidden");
+        }
+
+        // Fade in once loaded
+        currentImage.onload = () => {
+          currentImage.classList.remove("opacity-0");
+          currentImage.classList.add("opacity-100");
+        };
+      }, 500);
+    }
+
+    function nextSlide() {
+      if (photos.length === 0) return;
+      currentIndex = (currentIndex + 1) % photos.length;
+      displayPhoto(currentIndex);
+    }
+
+    // Auto-advance slide every 5 seconds
+    setInterval(nextSlide, 5000);
+
+    // Poll server for new photos every 10 seconds
+    setInterval(fetchEventData, 10000);
+
+    // Initial fetch
+    fetchEventData();
+
+    function toggleFullScreen() {
+      if (!document.fullscreenElement) {
+        document.documentElement.requestFullscreen().catch(() => {});
+      } else {
+        document.exitFullscreen().catch(() => {});
+      }
+    }
+  </script>
+</body>
+</html>
