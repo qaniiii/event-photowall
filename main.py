@@ -1,12 +1,15 @@
 import os
-from typing import Optional
-from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File, Form
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, Header, Request, status
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
+from dotenv import load_dotenv
 import cloudinary
 import cloudinary.uploader
-from dotenv import load_dotenv
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
 from database import engine, Base, get_db
 import models
@@ -14,7 +17,7 @@ import schemas
 
 load_dotenv()
 
-# Configure Cloudinary SDK with your credentials from .env
+# Cloudinary Setup
 cloudinary.config(
     cloud_name=os.getenv("CLOUDINARY_CLOUD_NAME"),
     api_key=os.getenv("CLOUDINARY_API_KEY"),
@@ -22,37 +25,63 @@ cloudinary.config(
     secure=True
 )
 
-# Automatically create tables in photowall.db if they don't exist yet
-Base.metadata.create_all(bind=engine)
+# Admin Secret
+ADMIN_SECRET_KEY = os.getenv("ADMIN_SECRET_KEY", "default_insecure_secret")
 
-app = FastAPI(title="Event Photo-Wall API", version="1.0.0")
+# Lifespan context: creates tables safely during application startup
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Runs when server starts
+    Base.metadata.create_all(bind=engine)
+    yield
+    # Runs when server shuts down (cleanup if needed)
 
-# Mount the static directory to serve frontend assets (CSS, JS, images)
-app.mount("/static", StaticFiles(directory="static"), name="static")
+# Rate Limiter setup (tracks clients by IP address)
+limiter = Limiter(key_func=get_remote_address)
+app = FastAPI(title="Event Photo Wall API", lifespan=lifespan)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# CORS setup
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Security Constants
+ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp", "image/heic"}
+MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB limit
 
 
-# --- Frontend Route ---
-
-@app.get("/")
-def serve_home():
-    """Serves the main photo wall web interface."""
-    return FileResponse("static/index.html")
-
-
-# --- API Routes ---
-
-# 1. Create a new event (e.g. Host creates a wedding room)
-@app.post("/events/", response_model=schemas.EventResponse, status_code=status.HTTP_201_CREATED)
-def create_event(event: schemas.EventCreate, db: Session = Depends(get_db)):
-    db_event = db.query(models.Event).filter(models.Event.access_code == event.access_code.upper()).first()
-    if db_event:
+# --- Security Dependency ---
+def verify_admin_key(x_admin_key: str = Header(..., description="Admin Secret Passkey")):
+    """Ensures caller has the secret key before executing sensitive routes."""
+    if x_admin_key != ADMIN_SECRET_KEY:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, 
-            detail="An event with this access code already exists."
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or missing Admin Secret Key."
         )
+    return True
+
+
+# --- Endpoints ---
+
+# Protected: Only authorized admins can create events
+@app.post("/events/", response_model=schemas.EventResponse, status_code=status.HTTP_201_CREATED)
+def create_event(
+    event: schemas.EventCreate,
+    db: Session = Depends(get_db),
+    is_admin: bool = Depends(verify_admin_key)
+):
+    existing = db.query(models.Event).filter(models.Event.access_code == event.access_code.upper()).first()
+    if existing:
+        raise HTTPException(status_code=400, detail="Access code already exists")
     
     new_event = models.Event(
-        title=event.title, 
+        title=event.title,
         access_code=event.access_code.upper()
     )
     db.add(new_event)
@@ -61,57 +90,70 @@ def create_event(event: schemas.EventCreate, db: Session = Depends(get_db)):
     return new_event
 
 
-# 2. Get event details and its full photo gallery via access code
+# Public: Guests look up an event by access code
 @app.get("/events/{access_code}", response_model=schemas.EventResponse)
 def get_event(access_code: str, db: Session = Depends(get_db)):
     event = db.query(models.Event).filter(models.Event.access_code == access_code.upper()).first()
     if not event:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, 
-            detail="Event not found."
-        )
+        raise HTTPException(status_code=404, detail="Event not found")
     return event
 
 
-# 3. Upload a photo to an event (Uploads binary to Cloudinary, saves metadata to DB)
+# Rate-Limited & Validated: Guests upload photos (Max 10 uploads per minute per IP)
 @app.post("/events/{access_code}/photos/", response_model=schemas.PhotoResponse, status_code=status.HTTP_201_CREATED)
-async def upload_photo(
+@limiter.limit("10/minute")
+def upload_photo(
+    request: Request,
     access_code: str,
     file: UploadFile = File(...),
-    uploader_name: Optional[str] = Form("Guest"),
-    caption: Optional[str] = Form(None),
+    uploader_name: str = Form("Anonymous"),
+    caption: str = Form(""),
     db: Session = Depends(get_db)
 ):
-    # Verify the event exists in the database
+    # 1. Verify Event Exists
     event = db.query(models.Event).filter(models.Event.access_code == access_code.upper()).first()
     if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    
+    # 2. Validate MIME Type
+    if file.content_type not in ALLOWED_IMAGE_TYPES:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, 
-            detail="Event not found."
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail=f"Unsupported file type ({file.content_type}). Allowed: JPG, PNG, WEBP, HEIC."
         )
 
-    # Upload binary file directly to Cloudinary
+    # 3. Read & Validate File Size
+    contents = file.file.read()
+    if len(contents) > MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"File exceeds maximum allowed size of {MAX_FILE_SIZE / (1024 * 1024):.0f}MB."
+        )
+    
+    file.file.seek(0)
+
+    # 4. Stream to Cloudinary
     try:
         upload_result = cloudinary.uploader.upload(
             file.file,
             folder=f"photowall/{access_code.upper()}"
         )
-        secure_url = upload_result.get("secure_url")
+        image_url = upload_result.get("secure_url")
     except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, 
-            detail=f"Image upload failed: {str(e)}"
-        )
+        raise HTTPException(status_code=500, detail=f"Image upload failed: {str(e)}")
 
-    # Store image URL and metadata into SQLite
-    new_photo = models.Photo(
+    # 5. Persist to Neon DB
+    photo = models.Photo(
         event_id=event.id,
-        image_url=secure_url,
-        uploader_name=uploader_name,
-        caption=caption
+        image_url=image_url,
+        uploader_name=uploader_name.strip() or "Anonymous",
+        caption=caption.strip()
     )
-    db.add(new_photo)
+    db.add(photo)
     db.commit()
-    db.refresh(new_photo)
+    db.refresh(photo)
+    return photo
 
-    return new_photo
+
+# Serve Frontend
+app.mount("/", StaticFiles(directory="static", html=True), name="static")
