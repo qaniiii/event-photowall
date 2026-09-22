@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Host Admin Portal | Event Photo Wall</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- QR Code Library CDN -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen">
+
+  <!-- Header -->
+  <header class="border-b border-slate-800 bg-slate-900/80 backdrop-blur sticky top-0 z-40">
+    <div class="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <span class="text-2xl">🛡️</span>
+        <h1 class="text-xl font-bold tracking-tight text-white">Event Admin Portal</h1>
+      </div>
+      <div class="flex items-center gap-3">
+        <a href="/" class="text-xs text-indigo-400 hover:text-indigo-300 font-medium transition">← Guest View</a>
+        <button id="logoutBtn" class="hidden text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-3 py-1.5 rounded-lg border border-slate-700 transition">
+          Lock Portal
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-6xl mx-auto px-4 py-8">
+
+    <!-- Auth Gate Modal / Screen -->
+    <div id="authScreen" class="max-w-md mx-auto mt-12 bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl">
+      <div class="text-center mb-6">
+        <div class="w-12 h-12 bg-indigo-500/10 text-indigo-400 rounded-full flex items-center justify-center mx-auto mb-3 text-xl">
+          🔑
+        </div>
+        <h2 class="text-lg font-bold">Admin Authentication</h2>
+        <p class="text-xs text-slate-400 mt-1">Enter your secret admin key to access event controls</p>
+      </div>
+      <form id="authForm" class="space-y-4">
+        <div>
+          <label class="block text-xs font-semibold text-slate-300 mb-1">Admin Secret Key</label>
+          <input type="password" id="adminKeyInput" required placeholder="Enter ADMIN_SECRET_KEY..."
+            class="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+        </div>
+        <button type="submit"
+          class="w-full bg-indigo-600 hover:bg-indigo-500 font-semibold text-sm py-2.5 rounded-xl shadow-lg transition duration-200">
+          Unlock Dashboard
+        </button>
+      </form>
+    </div>
+
+    <!-- Admin Dashboard (Hidden Until Authenticated) -->
+    <div id="dashboardSection" class="hidden space-y-8">
+
+      <!-- Action Panel: Create Event -->
+      <section class="bg-slate-900/90 border border-slate-800 rounded-2xl p-6 shadow-xl">
+        <h2 class="text-base font-semibold text-white mb-4 flex items-center gap-2">
+          <span>✨</span> Create New Event
+        </h2>
+        <form id="createEventForm" class="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div>
+            <label class="block text-xs text-slate-400 mb-1">Event Title</label>
+            <input type="text" id="eventTitle" placeholder="e.g. Sarah & Dan Wedding" required
+              class="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+          </div>
+          <div>
+            <label class="block text-xs text-slate-400 mb-1">Access Code (Uppercase)</label>
+            <input type="text" id="eventCode" placeholder="e.g. WED2026" required uppercase
+              class="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-2 text-sm text-white uppercase focus:outline-none focus:ring-2 focus:ring-indigo-500" />
+          </div>
+          <div class="flex items-end">
+            <button type="submit"
+              class="w-full bg-emerald-600 hover:bg-emerald-500 font-semibold text-sm py-2 px-4 rounded-xl transition duration-150 shadow-lg">
+              + Launch Event
+            </button>
+          </div>
+        </form>
+      </section>
+
+      <!-- Events List & Moderation Grid -->
+      <section>
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-base font-semibold text-white flex items-center gap-2">
+            <span>📋</span> Active Events (<span id="eventCountBadge">0</span>)
+          </h2>
+          <button onclick="loadEvents()" class="text-xs bg-slate-800 hover:bg-slate-700 border border-slate-700 px-3 py-1.5 rounded-lg text-slate-300">
+            🔄 Refresh
+          </button>
+        </div>
+
+        <div id="eventsContainer" class="space-y-6">
+          <!-- Dynamically populated events -->
+        </div>
+      </section>
+
+    </div>
+
+  </main>
+
+  <!-- QR Code Modal -->
+  <div id="qrModal" class="hidden fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+    <div class="bg-slate-900 border border-slate-800 rounded-2xl p-6 max-w-sm w-full text-center space-y-4">
+      <h3 id="qrModalTitle" class="font-bold text-white text-base">Event QR Code</h3>
+      <p class="text-xs text-slate-400">Scan to join the photo wall directly:</p>
+      <div id="qrcode" class="flex justify-center p-4 bg-white rounded-xl inline-block mx-auto"></div>
+      <p id="qrUrlText" class="text-[11px] text-slate-400 break-all"></p>
+      <button onclick="closeQrModal()" class="w-full bg-slate-800 hover:bg-slate-700 text-xs py-2 rounded-xl text-slate-300">
+        Close
+      </button>
+    </div>
+  </div>
+
+  <script>
+    let adminKey = sessionStorage.getItem("adminKey") || "";
+
+    const authScreen = document.getElementById("authScreen");
+    const dashboardSection = document.getElementById("dashboardSection");
+    const logoutBtn = document.getElementById("logoutBtn");
+    const authForm = document.getElementById("authForm");
+    const adminKeyInput = document.getElementById("adminKeyInput");
+    const eventsContainer = document.getElementById("eventsContainer");
+    const createEventForm = document.getElementById("createEventForm");
+
+    // Check if key is already stored in session
+    if (adminKey) {
+      showDashboard();
+    }
+
+    authForm.addEventListener("submit", (e) => {
+      e.preventDefault();
+      adminKey = adminKeyInput.value.trim();
+      sessionStorage.setItem("adminKey", adminKey);
+      showDashboard();
+    });
+
+    logoutBtn.addEventListener("click", () => {
+      sessionStorage.removeItem("adminKey");
+      adminKey = "";
+      location.reload();
+    });
+
+    function showDashboard() {
+      authScreen.classList.add("hidden");
+      dashboardSection.classList.remove("hidden");
+      logoutBtn.classList.remove("hidden");
+      loadEvents();
+    }
+
+    // Fetch and render events
+    async function loadEvents() {
+      eventsContainer.innerHTML = `<div class="p-8 text-center text-xs text-slate-500">Loading events...</div>`;
+      try {
+        const res = await fetch("/admin/events", {
+          headers: { "x-admin-key": adminKey }
+        });
+
+        if (res.status === 401) {
+          alert("Unauthorized: Incorrect Admin Key.");
+          logoutBtn.click();
+          return;
+        }
+
+        const events = await res.json();
+        document.getElementById("eventCountBadge").textContent = events.length;
+
+        if (events.length === 0) {
+          eventsContainer.innerHTML = `<div class="p-8 text-center text-sm text-slate-500 border border-dashed border-slate-800 rounded-2xl">No events created yet.</div>`;
+          return;
+        }
+
+        eventsContainer.innerHTML = events.map(ev => `
+          <div class="bg-slate-900/60 border border-slate-800 rounded-2xl p-6 shadow-sm space-y-4">
+            <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800/80 pb-3">
+              <div>
+                <span class="text-xs font-mono font-bold bg-indigo-500/20 text-indigo-400 px-2.5 py-1 rounded-md tracking-wider mr-2">${ev.access_code}</span>
+                <span class="text-base font-bold text-white">${ev.title}</span>
+              </div>
+              <div class="flex items-center gap-2">
+                <button onclick="showQrCode('${ev.access_code}', '${ev.title}')" class="text-xs bg-slate-800 hover:bg-slate-700 px-3 py-1.5 rounded-lg text-slate-300">
+                  📱 QR Code
+                </button>
+                <button onclick="deleteEvent(${ev.id}, '${ev.title}')" class="text-xs bg-red-950/40 hover:bg-red-900/50 text-red-400 border border-red-900/40 px-3 py-1.5 rounded-lg transition">
+                  🗑️ Delete Event
+                </button>
+              </div>
+            </div>
+
+            <!-- Photos Moderation Grid -->
+            <div>
+              <div class="text-xs text-slate-400 mb-3 font-medium">Uploaded Photos (${ev.photos.length})</div>
+              ${ev.photos.length === 0 
+                ? `<p class="text-xs text-slate-600 italic">No photos uploaded to this event yet.</p>` 
+                : `<div class="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 gap-3">
+                    ${ev.photos.map(p => `
+                      <div class="group relative bg-slate-950 border border-slate-800 rounded-xl overflow-hidden shadow">
+                        <img src="${p.image_url}" class="w-full h-28 object-cover group-hover:opacity-80 transition" loading="lazy" />
+                        <div class="p-2 text-[10px]">
+                          <p class="font-semibold text-slate-300 truncate">${p.uploader_name}</p>
+                          <p class="text-slate-500 truncate">${p.caption || 'No caption'}</p>
+                        </div>
+                        <button onclick="deletePhoto(${p.id})" title="Delete photo"
+                          class="absolute top-1 right-1 bg-red-600 hover:bg-red-500 text-white rounded-md p-1.5 text-xs opacity-90 group-hover:opacity-100 transition shadow">
+                          ✕
+                        </button>
+                      </div>
+                    `).join('')}
+                  </div>`
+              }
+            </div>
+          </div>
+        `).join('');
+
+      } catch (err) {
+        eventsContainer.innerHTML = `<div class="p-4 text-xs text-red-400">Failed to load events: ${err.message}</div>`;
+      }
+    }
+
+    // Create Event Form Handler
+    createEventForm.addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const title = document.getElementById("eventTitle").value.trim();
+      const access_code = document.getElementById("eventCode").value.trim().toUpperCase();
+
+      try {
+        const res = await fetch("/events/", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "x-admin-key": adminKey
+          },
+          body: JSON.stringify({ title, access_code })
+        });
+
+        if (!res.ok) {
+          const err = await res.json();
+          alert(`Error: ${err.detail || 'Could not create event'}`);
+          return;
+        }
+
+        createEventForm.reset();
+        loadEvents();
+      } catch (err) {
+        alert(`Request failed: ${err.message}`);
+      }
+    });
+
+    // Delete single photo
+    async function deletePhoto(photoId) {
+      if (!confirm("Are you sure you want to permanently delete this photo?")) return;
+      try {
+        const res = await fetch(`/admin/photos/${photoId}`, {
+          method: "DELETE",
+          headers: { "x-admin-key": adminKey }
+        });
+        if (res.ok) {
+          loadEvents();
+        } else {
+          const err = await res.json();
+          alert(`Failed: ${err.detail}`);
+        }
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+
+    // Delete entire event
+    async function deleteEvent(eventId, title) {
+      if (!confirm(`Are you sure you want to delete "${title}" and all its photos? This cannot be undone.`)) return;
+      try {
+        const res = await fetch(`/admin/events/${eventId}`, {
+          method: "DELETE",
+          headers: { "x-admin-key": adminKey }
+        });
+        if (res.ok) {
+          loadEvents();
+        } else {
+          const err = await res.json();
+          alert(`Failed: ${err.detail}`);
+        }
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+
+    // QR Code Modal Logic
+    let qrInstance = null;
+    function showQrCode(accessCode, title) {
+      document.getElementById("qrModalTitle").textContent = title;
+      const origin = window.location.origin;
+      // Pre-fill query or link to the guest join
+      const joinUrl = `${origin}/?code=${accessCode}`;
+      document.getElementById("qrUrlText").textContent = joinUrl;
+
+      const qrContainer = document.getElementById("qrcode");
+      qrContainer.innerHTML = "";
+      qrInstance = new QRCode(qrContainer, {
+        text: joinUrl,
+        width: 180,
+        height: 180,
+        colorDark: "#020617",
+        colorLight: "#ffffff",
+        correctLevel: QRCode.CorrectLevel.H
+      });
+
+      document.getElementById("qrModal").classList.remove("hidden");
+    }
+
+    function closeQrModal() {
+      document.getElementById("qrModal").classList.add("hidden");
+    }
+  </script>
+</body>
+</html>

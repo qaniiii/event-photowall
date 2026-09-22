@@ -1,4 +1,5 @@
 import os
+import re
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Depends, HTTPException, UploadFile, File, Form, Header, Request, status
 from fastapi.staticfiles import StaticFiles
@@ -28,21 +29,16 @@ cloudinary.config(
 # Admin Secret
 ADMIN_SECRET_KEY = os.getenv("ADMIN_SECRET_KEY", "default_insecure_secret")
 
-# Lifespan context: creates tables safely during application startup
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Runs when server starts
     Base.metadata.create_all(bind=engine)
     yield
-    # Runs when server shuts down (cleanup if needed)
 
-# Rate Limiter setup (tracks clients by IP address)
 limiter = Limiter(key_func=get_remote_address)
 app = FastAPI(title="Event Photo Wall API", lifespan=lifespan)
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# CORS setup
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -51,14 +47,12 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Security Constants
 ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp", "image/heic"}
-MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB limit
+MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
 
 
-# --- Security Dependency ---
+# --- Admin Security Dependency ---
 def verify_admin_key(x_admin_key: str = Header(..., description="Admin Secret Passkey")):
-    """Ensures caller has the secret key before executing sensitive routes."""
     if x_admin_key != ADMIN_SECRET_KEY:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -67,9 +61,82 @@ def verify_admin_key(x_admin_key: str = Header(..., description="Admin Secret Pa
     return True
 
 
-# --- Endpoints ---
+# Helper to extract Cloudinary public_id from URL
+def get_cloudinary_public_id(image_url: str) -> str:
+    # URL pattern: .../upload/(v12345/)?(photowall/EVENT/filename).ext
+    match = re.search(r"/upload/(?:v\d+/)?(.+)\.[a-zA-Z0-9]+$", image_url)
+    if match:
+        return match.group(1)
+    return None
 
-# Protected: Only authorized admins can create events
+
+# ==========================================
+# GUEST & PUBLIC ENDPOINTS
+# ==========================================
+
+@app.get("/events/{access_code}", response_model=schemas.EventResponse)
+def get_event(access_code: str, db: Session = Depends(get_db)):
+    event = db.query(models.Event).filter(models.Event.access_code == access_code.upper()).first()
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    return event
+
+
+@app.post("/events/{access_code}/photos/", response_model=schemas.PhotoResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit("10/minute")
+def upload_photo(
+    request: Request,
+    access_code: str,
+    file: UploadFile = File(...),
+    uploader_name: str = Form("Anonymous"),
+    caption: str = Form(""),
+    db: Session = Depends(get_db)
+):
+    event = db.query(models.Event).filter(models.Event.access_code == access_code.upper()).first()
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    
+    if file.content_type not in ALLOWED_IMAGE_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail=f"Unsupported file type ({file.content_type}). Allowed: JPG, PNG, WEBP, HEIC."
+        )
+
+    contents = file.file.read()
+    if len(contents) > MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"File exceeds maximum allowed size of {MAX_FILE_SIZE / (1024 * 1024):.0f}MB."
+        )
+    
+    file.file.seek(0)
+
+    try:
+        upload_result = cloudinary.uploader.upload(
+            file.file,
+            folder=f"photowall/{access_code.upper()}"
+        )
+        image_url = upload_result.get("secure_url")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Image upload failed: {str(e)}")
+
+    photo = models.Photo(
+        event_id=event.id,
+        image_url=image_url,
+        uploader_name=uploader_name.strip() or "Anonymous",
+        caption=caption.strip()
+    )
+    db.add(photo)
+    db.commit()
+    db.refresh(photo)
+    return photo
+
+
+# ==========================================
+# PROTECTED ADMIN ENDPOINTS
+# ==========================================
+
+# 1. Create a new event
 @app.post("/events/", response_model=schemas.EventResponse, status_code=status.HTTP_201_CREATED)
 def create_event(
     event: schemas.EventCreate,
@@ -90,70 +157,83 @@ def create_event(
     return new_event
 
 
-# Public: Guests look up an event by access code
-@app.get("/events/{access_code}", response_model=schemas.EventResponse)
-def get_event(access_code: str, db: Session = Depends(get_db)):
-    event = db.query(models.Event).filter(models.Event.access_code == access_code.upper()).first()
-    if not event:
-        raise HTTPException(status_code=404, detail="Event not found")
-    return event
-
-
-# Rate-Limited & Validated: Guests upload photos (Max 10 uploads per minute per IP)
-@app.post("/events/{access_code}/photos/", response_model=schemas.PhotoResponse, status_code=status.HTTP_201_CREATED)
-@limiter.limit("10/minute")
-def upload_photo(
-    request: Request,
-    access_code: str,
-    file: UploadFile = File(...),
-    uploader_name: str = Form("Anonymous"),
-    caption: str = Form(""),
-    db: Session = Depends(get_db)
+# 2. Get list of all events with their photos
+@app.get("/admin/events", status_code=status.HTTP_200_OK)
+def admin_get_all_events(
+    db: Session = Depends(get_db),
+    is_admin: bool = Depends(verify_admin_key)
 ):
-    # 1. Verify Event Exists
-    event = db.query(models.Event).filter(models.Event.access_code == access_code.upper()).first()
+    events = db.query(models.Event).order_by(models.Event.created_at.desc()).all()
+    result = []
+    for ev in events:
+        result.append({
+            "id": ev.id,
+            "title": ev.title,
+            "access_code": ev.access_code,
+            "created_at": ev.created_at.isoformat() if ev.created_at else None,
+            "photo_count": len(ev.photos),
+            "photos": [
+                {
+                    "id": p.id,
+                    "image_url": p.image_url,
+                    "uploader_name": p.uploader_name,
+                    "caption": p.caption,
+                    "uploaded_at": p.uploaded_at.isoformat() if p.uploaded_at else None
+                } for p in ev.photos
+            ]
+        })
+    return result
+
+
+# 3. Moderation: Delete a specific photo
+@app.delete("/admin/photos/{photo_id}", status_code=status.HTTP_200_OK)
+def admin_delete_photo(
+    photo_id: int,
+    db: Session = Depends(get_db),
+    is_admin: bool = Depends(verify_admin_key)
+):
+    photo = db.query(models.Photo).filter(models.Photo.id == photo_id).first()
+    if not photo:
+        raise HTTPException(status_code=404, detail="Photo not found")
+
+    # 1. Attempt to delete from Cloudinary CDN
+    public_id = get_cloudinary_public_id(photo.image_url)
+    if public_id:
+        try:
+            cloudinary.uploader.destroy(public_id)
+        except Exception as e:
+            print(f"Warning: Cloudinary asset removal failed: {e}")
+
+    # 2. Delete record from Neon DB
+    db.delete(photo)
+    db.commit()
+    return {"message": "Photo deleted successfully", "photo_id": photo_id}
+
+
+# 4. Moderation: Delete an entire event
+@app.delete("/admin/events/{event_id}", status_code=status.HTTP_200_OK)
+def admin_delete_event(
+    event_id: int,
+    db: Session = Depends(get_db),
+    is_admin: bool = Depends(verify_admin_key)
+):
+    event = db.query(models.Event).filter(models.Event.id == event_id).first()
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
-    
-    # 2. Validate MIME Type
-    if file.content_type not in ALLOWED_IMAGE_TYPES:
-        raise HTTPException(
-            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
-            detail=f"Unsupported file type ({file.content_type}). Allowed: JPG, PNG, WEBP, HEIC."
-        )
 
-    # 3. Read & Validate File Size
-    contents = file.file.read()
-    if len(contents) > MAX_FILE_SIZE:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"File exceeds maximum allowed size of {MAX_FILE_SIZE / (1024 * 1024):.0f}MB."
-        )
-    
-    file.file.seek(0)
+    # Delete all photos in Cloudinary for this event
+    for p in event.photos:
+        pub_id = get_cloudinary_public_id(p.image_url)
+        if pub_id:
+            try:
+                cloudinary.uploader.destroy(pub_id)
+            except Exception:
+                pass
 
-    # 4. Stream to Cloudinary
-    try:
-        upload_result = cloudinary.uploader.upload(
-            file.file,
-            folder=f"photowall/{access_code.upper()}"
-        )
-        image_url = upload_result.get("secure_url")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Image upload failed: {str(e)}")
-
-    # 5. Persist to Neon DB
-    photo = models.Photo(
-        event_id=event.id,
-        image_url=image_url,
-        uploader_name=uploader_name.strip() or "Anonymous",
-        caption=caption.strip()
-    )
-    db.add(photo)
+    db.delete(event)
     db.commit()
-    db.refresh(photo)
-    return photo
+    return {"message": f"Event '{event.title}' and all associated photos deleted."}
 
 
-# Serve Frontend
+# Mount Static directory
 app.mount("/", StaticFiles(directory="static", html=True), name="static")
