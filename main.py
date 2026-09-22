@@ -11,6 +11,7 @@ import cloudinary.uploader
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
+from ai_service import analyze_and_moderate_image
 
 from database import engine, Base, get_db
 import models
@@ -95,7 +96,7 @@ def upload_photo(
     event = db.query(models.Event).filter(models.Event.access_code == access_code.upper()).first()
     if not event:
         raise HTTPException(status_code=404, detail="Event not found")
-    
+
     if file.content_type not in ALLOWED_IMAGE_TYPES:
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
@@ -108,7 +109,20 @@ def upload_photo(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
             detail=f"File exceeds maximum allowed size of {MAX_FILE_SIZE / (1024 * 1024):.0f}MB."
         )
-    
+
+    # --- AI Safety & Auto-Caption Check ---
+    is_safe, final_caption, reason = analyze_and_moderate_image(
+        image_bytes=contents,
+        mime_type=file.content_type,
+        user_caption=caption
+    )
+
+    if not is_safe:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Photo rejected by AI safety filter: {reason or 'Content not suitable for public display.'}"
+        )
+
     file.file.seek(0)
 
     try:
@@ -124,7 +138,7 @@ def upload_photo(
         event_id=event.id,
         image_url=image_url,
         uploader_name=uploader_name.strip() or "Anonymous",
-        caption=caption.strip()
+        caption=final_caption
     )
     db.add(photo)
     db.commit()
@@ -151,15 +165,26 @@ def upload_photos_batch(
 
     created_photos = []
     clean_name = uploader_name.strip() or "Anonymous"
-    clean_caption = caption.strip()
+    user_caption = caption.strip()
 
     for file in files:
         if file.content_type not in ALLOWED_IMAGE_TYPES:
-            continue  # Skip unallowed types gracefully in batch
+            continue
 
         contents = file.file.read()
         if len(contents) > MAX_FILE_SIZE:
-            continue  # Skip files exceeding 10MB
+            continue
+
+        # AI Check
+        is_safe, final_caption, _ = analyze_and_moderate_image(
+            image_bytes=contents,
+            mime_type=file.content_type,
+            user_caption=user_caption
+        )
+
+        if not is_safe:
+            continue  # Drop unsafe photos in batch gracefully
+
         file.file.seek(0)
 
         try:
@@ -173,7 +198,7 @@ def upload_photos_batch(
                 event_id=event.id,
                 image_url=image_url,
                 uploader_name=clean_name,
-                caption=clean_caption
+                caption=final_caption
             )
             db.add(photo)
             db.commit()
@@ -183,7 +208,7 @@ def upload_photos_batch(
             continue
 
     if not created_photos:
-        raise HTTPException(status_code=400, detail="No valid images were successfully uploaded.")
+        raise HTTPException(status_code=400, detail="No photos passed moderation or upload criteria.")
 
     return created_photos
 

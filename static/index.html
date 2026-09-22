@@ -85,7 +85,7 @@
             </div>
             <div>
               <label class="block text-xs text-slate-400 mb-1">Caption / Message</label>
-              <input type="text" id="captionInput" placeholder="Wishing you the best!"
+              <input type="text" id="captionInput" placeholder="Optional - AI will write one if empty!"
                 class="w-full bg-slate-800 border border-slate-700 rounded-xl px-3 py-2 text-sm text-white focus:outline-none focus:ring-2 focus:ring-indigo-500" />
             </div>
           </div>
@@ -101,7 +101,7 @@
         </form>
       </section>
 
-      <!-- Photos Masonry Grid & Controls -->
+      <!-- Photos Grid & Controls -->
       <section>
         <div class="flex items-center justify-between mb-4">
           <div class="flex items-center gap-3">
@@ -288,7 +288,6 @@
 
             <div class="aspect-square bg-slate-950 overflow-hidden relative">
               <img src="${p.image_url}" class="w-full h-full object-cover transition duration-300 hover:scale-105" loading="lazy" />
-              <!-- Direct individual download icon -->
               <a href="${p.image_url}" target="_blank" download="photo-${p.id}.jpg" onclick="event.stopPropagation()"
                 class="absolute bottom-2 right-2 bg-slate-900/80 hover:bg-slate-900 text-slate-300 p-2 rounded-xl text-xs backdrop-blur border border-white/10 shadow">
                 ⬇️
@@ -307,7 +306,6 @@
       }).join('');
     }
 
-    // Helper: Download a list of photos into a ZIP
     async function packageAndSaveZip(targetPhotos, filename) {
       if (!targetPhotos || targetPhotos.length === 0) {
         alert("No photos to download!");
@@ -333,7 +331,6 @@
       saveAs(content, filename);
     }
 
-    // Bulk Download All
     async function downloadAllZip() {
       const btn = document.getElementById("zipAllBtn");
       const originalText = btn.textContent;
@@ -350,7 +347,6 @@
       }
     }
 
-    // Download Selected
     async function downloadSelectedZip() {
       const btn = document.getElementById("downloadSelectedBtn");
       btn.disabled = true;
@@ -368,7 +364,7 @@
       }
     }
 
-    // Batch Upload Handler
+    // Direct Batch Upload
     uploadForm.addEventListener("submit", async (e) => {
       e.preventDefault();
       const fileInput = document.getElementById("fileInput");
